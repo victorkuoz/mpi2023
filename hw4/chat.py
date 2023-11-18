@@ -42,7 +42,8 @@ class Chat(object):
 
             # handshaking
             while True:
-                print("Handshaking...\n")
+                print('Handshaking...')
+                print('Sending synchronize...')
                 self.sender.synchronize()   # syn
 
                 # set timer
@@ -62,6 +63,7 @@ class Chat(object):
                     cls()
                     continue
 
+                print('Receiving acknowledge...')
                 # not ack
                 if self.sensor.detect_acknowledge() == False:
                     input('Wrong acknowledge!!!\nKeep handshaking with "Enter" / Quit with "Ctrl-C"\n')
@@ -75,6 +77,7 @@ class Chat(object):
             checksum = self.checksum(msg)
 
             while True:
+                print('Sending message...')
                 # sending message
                 self.sender.send_preamble()
                 self.sender.send_value(len(msg))
@@ -101,14 +104,15 @@ class Chat(object):
         try:
             print("-----Receiving mode-----")
             while True:
-                print("Handshaking...", end='')
+                print("Handshaking...")
                 # busy sensing
                 while self.sensor.light < self.threshold:
                     continue
 
+                print('Receiving synchronize...')
                 # receive syn
                 if not self.sensor.detect_synchronize():
-                    print('Wrong Synchronize!!!')
+                    print('Wrong synchronize!!!')
                     continue
 
                 # send ack
@@ -122,6 +126,7 @@ class Chat(object):
                 while self.sensor.light < self.threshold:
                     continue
 
+                print('Receiving message...')
                 self.sensor.detect_preamble()   # ignore
                 length, msg = self.sensor.decode_value(self.sensor.detect_byte()), ''
                 for _ in range(length):
@@ -134,6 +139,7 @@ class Chat(object):
                     print("Wrong checksum...Rereceive!!!")
                     continue
 
+                print('Sending acknowledge...')
                 self.sender.acknowledge()
                 print(f'Receive msg: {msg}')
                 break
