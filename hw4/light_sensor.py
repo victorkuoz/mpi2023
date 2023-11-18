@@ -6,11 +6,13 @@ class GroveLightSensor(object):
     '''
     Grove Light Sensor class
     '''
-    def __init__(self, preamble = '10101010', st = 1.0, threshold = 100):
+    def __init__(self, ack = '11100000', preamble = '10101010', st = 1.0, syn = '11000000', threshold = 100):
+        self.ack = ack
         self.adc = ADC()
         self.channel = SlotHelper(SlotHelper.ADC).argv2pin()
         self.preamble = preamble
         self.st = st   # sleep time
+        self.syn = syn
         self.threshold = threshold # brightness threshold
 
     @property
@@ -23,34 +25,40 @@ class GroveLightSensor(object):
         '''
         return self.adc.read(self.channel)
 
-    def detect_byte(self):  # output byte in string format
-        byte_string = ""
+    def detect_byte(self):
+        byte = ""
         print('detecting: ', end='')
         for _ in range(8) :
             if self.light >= self.threshold:
-                byte_string += '1'
+                byte += '1'
             else :
-                byte_string += '0'
-            print(byte_string[-1], end='', flush=True)
+                byte += '0'
+            print(byte[-1], end='', flush=True)
             time.sleep(self.st)
         print()
-        return byte_string
+        return byte
 
-    def decode_byte(self, byte_string):
-        ascii_val = int('0b' + byte_string, 2)    # change string (binary) to int (decimal)
+    def decode_char(self, byte):
+        ascii_val = int('0b' + byte, 2)    # change string (binary) to int (decimal)
         return chr(ascii_val)  # chr(65) == 'A'
 
-    def decode_integer(self, byte_string):
+    def decode_value(self, byte):
         val = 0
         for _ in range(8):
             val <<= 1
-            if byte_string[0] == '1':
+            if byte[0] == '1':
                 val += 1
-            byte_string = byte_string[1:]
+            byte = byte[1:]
         return val
 
     def detect_preamble(self):
         return self.preamble == self.detect_byte()
+
+    def detect_synchronize(self):
+        return self.preamble == self.detect_byte() and self.syn == self.detect_byte()
+
+    def detect_acknowledge(self):
+        return self.preamble == self.detect_byte() and self.ack == self.detect_byte()
 
 if __name__ == '__main__':
     sensor = GroveLightSensor()

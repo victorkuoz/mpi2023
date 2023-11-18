@@ -1,30 +1,32 @@
 import RPi.GPIO as GPIO
-import time
 import os
 
 from threading import Timer
 from gpio import LightSender
 from light_sensor import GroveLightSensor
 
+def cls():
+    print ("\033[A                             \033[A")
+
 class Chat(object):
-    def __init__(self, st = 1.0, threshold = 100, timeout = 3, preamble = '10101010'):
+    def __init__(self, ack = '11100000', preamble = '10101010', st = 1.0, syn = '11000000', threshold = 100, timeout = 3):
         self.keep_waiting = True
-        self.sender = LightSender(st=st, preamble=preamble)
-        self.sensor = GroveLightSensor(st=st, preamble=preamble)
+        self.sender = LightSender(ack = ack, st=st, syn=syn, preamble=preamble)
+        self.sensor = GroveLightSensor(ack = ack, st=st, syn = syn, preamble=preamble)
         self.threshold = threshold
         self.timeout = timeout
-        self.timer = Timer(self.timeout, self.timeout_handler())
+        self.timer = Timer(self.timeout, self.timeout_handler)
         self.preamble = preamble
 
     def timeout_handler(self):
         self.keep_waiting = False
 
-    def checkSum(self, msg):
+    def checksum(self, msg):
+        return sum(ord(ch) for ch in msg) % 256
+        # old version
         encode_msg = self.sender.encode(msg)
         binary_sum = sum(int(e, 2) for e in encode_msg)
-        # print(binary_sum)
         binary_sum = format(binary_sum, 'b')
-        # print(binary_sum)
 
         if(len(binary_sum) > 8):
             binary_sum = binary_sum[-8:]
@@ -32,127 +34,136 @@ class Chat(object):
         if(len(binary_sum) < 8):
             binary_sum = '0' * (8 - len(binary_sum)) + binary_sum
 
-        return binary_sum 
+        return binary_sum
 
     def sending_mode(self):
         try:
             print("-----Sending mode-----")
-            while True:
-                print("Connecting...")
-                self.sender.blink_preamble()
 
+            # handshaking
+            while True:
+                print("Handshaking...\n")
+                self.sender.synchronize()   # syn
+
+                # set timer
                 self.keep_waiting = True
                 self.timer = Timer(self.timeout, self.timeout_handler)
                 self.timer.start()
 
-                while self.keep_waiting: # busy waiting
+                # busy waiting ack
+                while self.keep_waiting:
                     if self.threshold <= self.sensor.light:
                         self.timer.cancel()
                         break
 
+                # timeout
                 if self.keep_waiting == False:
-                    print("Timeout, connection refused!!!")
+                    input('Timeout!!!\nKeep handshaking with "Enter / Quit with "Ctrl-C"\n')
+                    cls()
                     continue
 
-                if self.sensor.detect_preamble() == False:
-                    print("Handshake Failed!!!")
+                # not ack
+                if self.sensor.detect_acknowledge() == False:
+                    input('Wrong acknowledge!!!\nKeep handshaking with "Enter" / Quit with "Ctrl-C"\n')
+                    cls()
                     continue
 
-                msg = input("Type the message: ")
+                print('Handshake success!!!')
+                break
 
-                while True:
-                    print('Sending message...')
-                    checksum = self.checkSum(msg)
-                    self.sender.blink_preamble()
-                    self.sender.blink_integer(len(msg))
-                    self.sender.blink_msg(msg)
-                    # blink checksum
-                    print(f"send checksum: {checksum}")
-                    self.sender.blink_byte_string(checksum)
+            msg = input("Type the message: ")
+            checksum = self.checksum(msg)
 
-                    print('Waiting acknowledge...')
-                    while self.sensor.light < self.threshold:
-                        continue
-
-                    if self.sensor.detect_byte() == self.preamble:
-                       break
-                    print('Mission failed: Retrying...')
-
-                print('Mission completed')
-
-        except KeyboardInterrupt:
-            cmd = input("\nExit the program with 'e' / Change to sensing mode with 's'\n")
-            if cmd == "e":
-                GPIO.cleanup()
-                os._exit(0)
-
-            print("Stopping sending...")
-            time.sleep(0.5)
-            self.sensing_mode()
-        finally:
-            pass
-
-    def sensing_mode(self):
-        try:
-            print("-----Sensing mode-----")
             while True:
-                print('Sensing...')
+                # sending message
+                self.sender.send_preamble()
+                self.sender.send_value(len(msg))
+                self.sender.send_msg(msg)
+                self.sender.send_value(checksum)
+
+                # waiting acknowledge
+                print('Detecting acknowledge...')
                 while self.sensor.light < self.threshold:
                     continue
 
-                if not self.sensor.detect_preamble():
-                    print('Preamble error!')
+                if self.sensor.detect_acknowledge():
+                    break
+                input('Wrong acknowledge!!!\nResend with "Enter" / Quit with "Ctrl-C"\n')
+                cls()
+
+            print('Completed!!!')
+        except KeyboardInterrupt:
+            print("\nStopping sending...")
+        finally:
+            pass
+
+    def receiving_mode(self):
+        try:
+            print("-----Receiving mode-----")
+            while True:
+                print("Handshaking...", end='')
+                # busy sensing
+                while self.sensor.light < self.threshold:
                     continue
 
-                self.sender.blink_preamble()
+                # receive syn
+                if not self.sensor.detect_synchronize():
+                    print('Wrong Synchronize!!!')
+                    continue
 
-                while True:
-                    print("detecing message...")
-                    while self.sensor.light < self.threshold:
-                        continue
+                # send ack
+                print('Sending acknowledge...')
+                self.sender.acknowledge()
+                print('Handshake success!!!')
+                break
 
-                    self.sensor.detect_preamble()   # ignore
+            while True:
+                # busy waiting
+                while self.sensor.light < self.threshold:
+                    continue
 
-                    length, msg = self.sensor.decode_integer(self.sensor.detect_byte()), ''
-                    for _ in range(length):
-                        msg += self.sensor.decode_byte(self.sensor.detect_byte())
+                self.sensor.detect_preamble()   # ignore
+                length, msg = self.sensor.decode_value(self.sensor.detect_byte()), ''
+                for _ in range(length):
+                    msg += self.sensor.decode_char(self.sensor.detect_byte())
 
-                    recv_checksum = self.sensor.decode_integer(self.sensor.detect_byte())
-                    print(f"receive checksum: {recv_checksum}")
-                    real_checksum = int(self.checkSum(msg), 2)
-                    print(f"calculated checksum: {real_checksum}")
-                    if recv_checksum == real_checksum:
-                        print("checksum pass")
-                    else:
-                        print("checksum fail")
-                        self.sender.blink_byte_string('11110000')
-                        continue
-                    # if checksum fail...
-                        # continue
+                recv_checksum = self.sensor.decode_value(self.sensor.detect_byte())
+                if recv_checksum != self.checksum(msg):
+                    self.sender.send_preamble()
+                    self.sender.send_preamble() # wrong acknowledge
+                    print("Wrong checksum...Rereceive!!!")
+                    continue
 
-                    self.sender.blink_preamble()
-                    print(f'Receive msg: {msg}')
-                    break
-
+                self.sender.acknowledge()
+                print(f'Receive msg: {msg}')
+                break
         except KeyboardInterrupt:
-            cmd = input("\nExit the program with 'e' / Change to sending mode with 's'\n")
-            if cmd == "e":
-                os._exit(0)
-
-            print("Stopping sensing...")
-            time.sleep(0.5)
-            self.sending_mode()
+            print("\nStopping receiving...")
         finally:
             pass
 
 def main():
-    chat = Chat(st=0.5)
+        try:
+            chat = Chat(st=0.5, threshold=300)
 
-    cmd = input("Sensing with command 'sensing' / Sending with command 'sending'...\n")
-    if cmd == 's':
-        chat.sensing_mode()
-    else:
-        chat.sending_mode()
+            os.system('clear')
+            print('Welcome to MpiChat')
+            while True:
+                cmd = input('Send message with command "s" / Receive message with command "r" / Quit with command "Ctrl-C"\n')
+                if cmd == 's':
+                    cls()
+                    chat.sending_mode()
+                elif cmd == 'r':
+                    cls()
+                    chat.receiving_mode()
+                else:
+                    cls()
+                    print('Wrong command!!!')
+        except KeyboardInterrupt:
+            pass
+        finally:
+            GPIO.cleanup()
+            print('\nBye~')
 
 if __name__ == "__main__":
     main()
