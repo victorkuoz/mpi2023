@@ -23,18 +23,6 @@ class Chat(object):
 
     def checksum(self, msg):
         return sum(ord(ch) for ch in msg) % 256
-        # old version
-        encode_msg = self.sender.encode(msg)
-        binary_sum = sum(int(e, 2) for e in encode_msg)
-        binary_sum = format(binary_sum, 'b')
-
-        if(len(binary_sum) > 8):
-            binary_sum = binary_sum[-8:]
-
-        if(len(binary_sum) < 8):
-            binary_sum = '0' * (8 - len(binary_sum)) + binary_sum
-
-        return binary_sum
 
     def sending_mode(self):
         try:
@@ -59,7 +47,7 @@ class Chat(object):
 
                 # timeout
                 if self.keep_waiting == False:
-                    input('Timeout!!!\nKeep handshaking with "Enter / Quit with "Ctrl-C"\n')
+                    input('Timeout!!!\nKeep handshaking with "Enter" / Quit with "Ctrl-C"\n')
                     cls()
                     continue
 
@@ -84,10 +72,22 @@ class Chat(object):
                 self.sender.send_msg(msg)
                 self.sender.send_value(checksum)
 
-                # waiting acknowledge
+                # set timer
+                self.keep_waiting = True
+                self.timer = Timer(self.timeout, self.timeout_handler)
+                self.timer.start()
+
+                # busy waiting ack
                 print('Detecting acknowledge...')
-                while self.sensor.light < self.threshold:
-                    continue
+                while self.keep_waiting:
+                    if self.threshold <= self.sensor.light:
+                        self.timer.cancel()
+                        break
+
+                # timeout
+                if self.keep_waiting == False:
+                    input('Timeout!!!\nQuit with "Ctrl-C"\n')
+                    cls()
 
                 if self.sensor.detect_acknowledge():
                     break
@@ -141,7 +141,7 @@ class Chat(object):
 
                 print('Sending acknowledge...')
                 self.sender.acknowledge()
-                print(f'Receive msg: {msg}')
+                print(f'Completed!!!\nReceive msg: {msg}')
                 break
         except KeyboardInterrupt:
             print("\nStopping receiving...")
@@ -150,7 +150,7 @@ class Chat(object):
 
 def main():
         try:
-            chat = Chat(st=0.5, threshold=300)
+            chat = Chat(st=0.5, threshold=250)
 
             os.system('clear')
             print('Welcome to MpiChat')
